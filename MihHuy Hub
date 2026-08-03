@@ -1,0 +1,88 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local localPlayer = Players.LocalPlayer
+
+local ADMINS = {
+ = true,
+}
+
+if not ADMINS[localPlayer.UserId] then return end
+
+local AdminRemote = ReplicatedStorage:WaitForChild("AdminRemoteAction")
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AdminControlPanel"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 220, 0, 360)
+mainFrame.Position = UDim2.new(0, 20, 0.5, -180)
+mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, 0, 0, 35)
+titleLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+titleLabel.Text = "BLOBMAN ADMIN ADVANCED"
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.TextSize = 13
+titleLabel.Font = Enum.Font.SourceSansBold
+titleLabel.Parent = mainFrame
+
+local nameTextBox = Instance.new("TextBox")
+nameTextBox.Size = UDim2.new(0, 180, 0, 30)
+nameTextBox.Position = UDim2.new(0.5, -90, 0, 45)
+nameTextBox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+nameTextBox.Text = ""
+nameTextBox.PlaceholderText = "Nhập tên người chơi..."
+nameTextBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+nameTextBox.TextSize = 14
+nameTextBox.Font = Enum.Font.SourceSans
+nameTextBox.Parent = mainFrame
+
+local function createButton(text, position, color, callback)
+	local button = Instance.new("TextButton")
+	button.Size = UDim2.new(0, 180, 0, 30)
+	button.Position = position
+	button.BackgroundColor3 = color
+	button.Text = text
+	button.TextColor3 = Color3.fromRGB(255, 255, 255)
+	button.TextSize = 13
+	button.Font = Enum.Font.SourceSansBold
+	button.BorderSizePixel = 0
+	button.MouseButton1Click:Connect(callback)
+	button.Parent = mainFrame
+	return button
+end
+
+createButton("FLING TARGET", UDim2.new(0.5, -90, 0, 85), Color3.fromRGB(180, 50, 50), function()
+	AdminRemote:FireServer("fling", nameTextBox.Text)
+end)
+
+createButton("BRING TARGET", UDim2.new(0.5, -90, 0, 120), Color3.fromRGB(50, 120, 180), function()
+	AdminRemote:FireServer("bring", nameTextBox.Text)
+end)
+
+createButton("ANTI-GRAB: PHYSICS", UDim2.new(0.5, -90, 0, 160), Color3.fromRGB(40, 140, 80), function()
+	AdminRemote:FireServer("antigrab_physics", localPlayer.Name)
+end)
+
+createButton("ANTI-GRAB: ANCHOR", UDim2.new(0.5, -90, 0, 195), Color3.fromRGB(140, 100, 40), function()
+	AdminRemote:FireServer("antigrab_anchor", localPlayer.Name)
+end)
+
+createButton("ANTI-GRAB: GHOST", UDim2.new(0.5, -90, 0, 230), Color3.fromRGB(100, 50, 150), function()
+	AdminRemote:FireServer("antigrab_ghost", localPlayer.Name)
+end)
+
+createButton("TURN OFF ANTI-GRAB", UDim2.new(0.5, -90, 0, 265), Color3.fromRGB(90, 90, 90), function()
+	AdminRemote:FireServer("antigrab_off", localPlayer.Name)
+end)
+
+createButton("KICK ALL PLYRS", UDim2.new(0.5, -90, 0, 310), Color3.fromRGB(150, 0, 0), function()
+	AdminRemote:FireServer("kickall")
+end)
