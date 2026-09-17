@@ -1,0 +1,584 @@
+// ==UserScript==
+// @name         Ng Tu Lap 1302 Hotdiscord
+// @namespace    http://tampermonkey.net/
+// @version      17.0.0
+// @description  Auto Register + Verify + Token Manager
+// @match        https://discord.com/register*
+// @match        https://discord.com/channels/*
+// @match        https://discord.com/verify*
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_deleteValue
+// @grant        GM_setClipboard
+// @connect      cheapluxurymail.xyz
+// @connect      click.discord.com
+// @connect      discord.com
+// ==/UserScript==
+
+(async () => {
+    'use strict';
+
+
+    const CFG = {
+        PASS:        GM_getValue('cfg_pass',    'ngtulappp'),
+        MAIL_PASS:   GM_getValue('cfg_mpass',   'CheapluxPass123@'),
+        API_BASE:    'https://cheapluxurymail.xyz',
+        PREFIX:      GM_getValue('cfg_prefix',  'tnghiadz'),
+        INTERVAL:    4000,
+        MAX:         30,
+        INVITE_LINK: GM_getValue('cfg_invite',  'https://discord.gg/dG6yNyDB9'),
+        DISPLAY_NAME:GM_getValue('cfg_display', ' ng tu lap'),
+    };
+
+    const state = {
+        email: '', user: '', count: 0,
+        checking: false, panelOpen: true
+    };
+
+
+    const saveToken = (token, email, username) => {
+        if (!token) return false;
+        let list = GM_getValue('saved_tokens_list', '[]');
+        try { list = JSON.parse(list); } catch(e) { list = []; }
+        if (list.some(t => t.token === token)) return false;
+        list.unshift({ token, email: email||'Unknown', username: username||'Unknown',
+            savedAt: new Date().toISOString(), timestamp: Date.now() });
+        GM_setValue('saved_tokens_list', JSON.stringify(list));
+        let only = GM_getValue('saved_tokens_only', '');
+        const lines = only ? only.split('\n').filter(Boolean) : [];
+        if (!lines.includes(token)) { lines.unshift(token); GM_setValue('saved_tokens_only', lines.join('\n')); }
+        return true;
+    };
+
+    const getAllTokens = () => {
+        let list = GM_getValue('saved_tokens_list', '[]');
+        try { return JSON.parse(list); } catch(e) { return []; }
+    };
+
+    const deleteAllTokens = () => {
+        GM_setValue('saved_tokens_list', '[]');
+        GM_setValue('saved_tokens_only', '');
+        success('🗑️ Đã xóa tất cả token!');
+    };
+
+    const copyToClipboard = async (text) => {
+        try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; } } catch(e) {}
+        try { GM_setClipboard(text); return true; } catch(e) {}
+        return false;
+    };
+
+
+    const showTokenManager = () => {
+        const tokens = getAllTokens();
+        if (!tokens.length) { error('❌ Chưa có token nào!'); return; }
+        let popup = document.createElement('div');
+        popup.id = 'token-manager-popup';
+        popup.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:linear-gradient(135deg,#1e293b,#0f172a);color:white;padding:20px;border-radius:16px;z-index:1000007;min-width:500px;max-width:90vw;max-height:80vh;overflow:auto;box-shadow:0 20px 40px black;border:1px solid #3b82f6;';
+        let html = `<div style="font-weight:700;font-size:16px;margin-bottom:12px;text-align:center;color:#60a5fa">📋 DANH SÁCH TOKEN (${tokens.length})</div>`;
+        tokens.forEach((t, i) => {
+            html += `
+                <div style="background:rgba(255,255,255,0.05);margin:8px 0;padding:10px;border-radius:10px;">
+                    <div style="font-size:12px"><span style="color:#4ade80">#${i+1}</span> | <span style="color:#60a5fa">${t.email}</span> | <span style="color:#fbbf24">${t.username}</span></div>
+                    <div style="font-size:11px;font-family:monospace;word-break:break-all;background:#00000055;padding:5px;border-radius:6px;margin-top:4px">${t.token}</div>
+                </div>`;
+        });
+        html += `
+            <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+                <button id="copy-all-token"  style="flex:1;background:#4ade80;border:none;padding:9px;border-radius:8px;cursor:pointer;font-weight:bold;font-size:12px">📋 Copy All</button>
+                <button id="save-file-token" style="flex:1;background:#f59e0b;border:none;padding:9px;border-radius:8px;cursor:pointer;font-weight:bold;font-size:12px">💾 Lưu .txt</button>
+                <button id="delete-all-token" style="flex:1;background:#ef4444;border:none;padding:9px;border-radius:8px;cursor:pointer;font-weight:bold;font-size:12px">🗑️ Xóa All</button>
+                <button id="close-token-manager" style="flex:1;background:#64748b;border:none;padding:9px;border-radius:8px;cursor:pointer;font-weight:bold;font-size:12px">❌ Đóng</button>
+            </div>`;
+        popup.innerHTML = html;
+        document.body.appendChild(popup);
+
+        document.getElementById('copy-all-token').onclick = async () => {
+            await copyToClipboard(tokens.map(t => t.token).join('\n'));
+            success('✅ Đã copy toàn bộ token!');
+        };
+        document.getElementById('save-file-token').onclick = () => {
+            const name = prompt('Tên file (không cần đuôi)', 'tokens');
+            if (!name) return;
+            const blob = new Blob([tokens.map(t => t.token).join('\n')], {type:'text/plain'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `${name}.txt`; a.click();
+            URL.revokeObjectURL(url);
+            success(`✅ Đã lưu ${tokens.length} token vào ${name}.txt`);
+        };
+        document.getElementById('delete-all-token').onclick = () => {
+            if (confirm('Xóa tất cả token?')) { deleteAllTokens(); popup.remove(); }
+        };
+        document.getElementById('close-token-manager').onclick = () => popup.remove();
+    };
+
+
+    const showSetConfig = () => {
+        let popup = document.createElement('div');
+        popup.id = 'set-config-popup';
+        popup.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:linear-gradient(135deg,#1e293b,#0f172a);color:white;padding:22px;border-radius:16px;z-index:1000007;width:360px;box-shadow:0 20px 40px black;border:1px solid #6366f1;';
+        popup.innerHTML = `
+            <div style="font-weight:700;font-size:15px;margin-bottom:14px;text-align:center;color:#a5b4fc">⚙️ SET CONFIG</div>
+            <div style="margin-bottom:12px">
+                <label style="font-size:12px;color:#94a3b8">Tên đăng nhập (Prefix)</label>
+                <input id="cfg-prefix" value="${GM_getValue('cfg_prefix','ngtulapp')}" style="width:100%;padding:7px 10px;border-radius:8px;border:1px solid #4b5563;background:#0f172a;color:white;font-size:13px;margin-top:3px;box-sizing:border-box">
+            </div>
+            <div style="margin-bottom:14px">
+                <label style="font-size:12px;color:#94a3b8">Link Server (invite)</label>
+                <input id="cfg-invite" value="${GM_getValue('cfg_invite','https://discord.gg/ngtulap')}" style="width:100%;padding:7px 10px;border-radius:8px;border:1px solid #4b5563;background:#0f172a;color:white;font-size:13px;margin-top:3px;box-sizing:border-box">
+            </div>
+            <div style="display:flex;gap:8px">
+                <button id="cfg-save" style="flex:1;background:#6366f1;border:none;padding:9px;border-radius:8px;cursor:pointer;font-weight:700;color:white;font-size:13px">💾 Lưu</button>
+                <button id="cfg-close" style="flex:1;background:#64748b;border:none;padding:9px;border-radius:8px;cursor:pointer;font-weight:700;color:white;font-size:13px">❌ Đóng</button>
+            </div>`;
+        document.body.appendChild(popup);
+        document.getElementById('cfg-save').onclick = () => {
+            GM_setValue('cfg_prefix', document.getElementById('cfg-prefix').value.trim());
+            GM_setValue('cfg_invite', document.getElementById('cfg-invite').value.trim());
+            // cập nhật CFG live
+            CFG.PREFIX = GM_getValue('cfg_prefix','tnghiadz');
+            CFG.INVITE_LINK = GM_getValue('cfg_invite','https://discord.gg/dG6yNyDB9');
+            success('✅ Đã lưu config!');
+            popup.remove();
+        };
+        document.getElementById('cfg-close').onclick = () => popup.remove();
+    };
+
+
+    const setVal = (el, val) => {
+        if (!el) return;
+        const setter = Object.getOwnPropertyDescriptor(el.__proto__, 'value').set;
+        const proto = Object.getPrototypeOf(el);
+        const protoSetter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+        (setter && setter !== protoSetter ? protoSetter : setter).call(el, val);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
+    const joinServer = async (retryCount = 0) => {
+        const maxRetries = 1; // chỉ thử lại 1 lần sau 10s
+        info("🔗 Đang tìm nút 'Tham gia máy chủ'...");
+
+        const findJoinButton = () => {
+            const texts = ['tham gia máy chủ', 'join server', 'join'];
+            for (const btn of document.querySelectorAll('button, a, div[role="button"]')) {
+                const t = btn.textContent.trim().toLowerCase();
+                if (texts.some(k => t.includes(k))) return btn;
+            }
+            for (const el of document.querySelectorAll('*')) {
+                if (el.children.length === 0) {
+                    const t = el.textContent.trim().toLowerCase();
+                    if (texts.some(k => t.includes(k))) {
+                        let p = el.parentElement;
+                        while (p) {
+                            if (p.tagName === 'BUTTON' || p.tagName === 'A' || p.getAttribute('role') === 'button') return p;
+                            p = p.parentElement;
+                        }
+                        return el;
+                    }
+                }
+            }
+            return null;
+        };
+
+        let joinBtn = findJoinButton();
+        if (!joinBtn) {
+            if (retryCount < maxRetries) {
+                error(`⏳ Chưa thấy nút, thử lại sau 10s (lần ${retryCount+1})...`);
+                await new Promise(r => setTimeout(r, 10000));
+                return joinServer(retryCount + 1);
+            } else {
+                error("❌ Không tìm thấy nút 'Tham gia máy chủ' sau 2 lần thử!");
+                return;
+            }
+        }
+
+        joinBtn.click();
+        await new Promise(r => setTimeout(r, 1000));
+
+        const findInviteInput = () => {
+            for (const input of document.querySelectorAll('input[type="text"], input:not([type])')) {
+                const ph = (input.placeholder||'').toLowerCase(), al = (input.getAttribute('aria-label')||'').toLowerCase();
+                if (ph.includes('liên kết')||ph.includes('invite')||ph.includes('link')||al.includes('invite')||al.includes('liên kết')) return input;
+            }
+            const modal = document.querySelector('[role="dialog"],[class*="modal"]');
+            if (modal) { const i = modal.querySelector('input[type="text"],input:not([type])'); if (i) return i; }
+            return null;
+        };
+
+        const inviteInput = findInviteInput();
+        if (!inviteInput) { error("❌ Không tìm thấy ô nhập 'Liên kết mời'!"); return; }
+        setVal(inviteInput, CFG.INVITE_LINK);
+        await new Promise(r => setTimeout(r, 500));
+
+        const submitBtn = Array.from(document.querySelectorAll('button'))
+            .find(b => !b.disabled && b.textContent.trim().toLowerCase().includes('tham gia'));
+        if (!submitBtn) { error("⚠️ Không tìm thấy nút 'Tham gia', click tay nhé!"); return; }
+        submitBtn.click();
+        success("🎉 Đã click 'Tham gia'! Xong!");
+    };
+
+
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const $ = s => document.querySelector(s);
+    const $$ = s => document.querySelectorAll(s);
+
+    const getToken = () => {
+        try {
+            const iframe = document.createElement('iframe');
+            document.head.append(iframe);
+            const token = iframe.contentWindow.localStorage.token || iframe.contentWindow.sessionStorage.token;
+            iframe.remove();
+            if (token) return token.replace(/"/g, '');
+        } catch(e) {}
+        try { return (localStorage.token || sessionStorage.token || '').replace(/"/g, ''); } catch(e) { return null; }
+    };
+
+    const makeToastContainer = () => {
+        if ($('#toast-container')) return;
+        const div = document.createElement('div');
+        div.id = 'toast-container';
+        div.style.cssText = `position:fixed;top:80px;right:20px;z-index:999999;display:flex;flex-direction:column;gap:10px;align-items:flex-end;font-family:'Inter',sans-serif;pointer-events:none;`;
+        document.body.appendChild(div);
+    };
+    const toast = (msg, color, dur=4000) => {
+        makeToastContainer();
+        const el = document.createElement('div');
+        el.style.cssText = `background:${color};color:#fff;padding:10px 16px;border-radius:10px;font-weight:600;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,.3);opacity:0;transform:translateY(-16px);transition:all .35s;pointer-events:auto;cursor:pointer;min-width:220px;`;
+        el.innerHTML = msg; el.onclick = () => el.remove();
+        $('#toast-container').appendChild(el);
+        requestAnimationFrame(() => { el.style.opacity='1'; el.style.transform='translateY(0)'; });
+        setTimeout(() => { el.style.opacity='0'; setTimeout(() => el.remove(), 350); }, dur);
+    };
+    const info    = msg => toast(msg, 'linear-gradient(135deg,#3b82f6,#60a5fa)');
+    const success = msg => toast(msg, 'linear-gradient(135deg,#10b981,#34d399)');
+    const error   = msg => toast(msg, 'linear-gradient(135deg,#ef4444,#f87171)');
+
+    const api = (method, url, data) => new Promise(resolve => {
+        GM_xmlhttpRequest({
+            method, url, timeout: 10000,
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            data: data ? JSON.stringify(data) : undefined,
+            onload: r => { try { resolve({ ok:true, data:JSON.parse(r.responseText) }); } catch { resolve({ ok:false }); } },
+            onerror: () => resolve({ ok:false })
+        });
+    });
+
+    const genUsername = () => `${CFG.PREFIX}${Array(6).fill().map(() => 'abcdefghijklmnopqrstuvwxyz0123456789'[~~(Math.random()*36)]).join('')}`;
+
+
+    const fetchDomains = async () => {
+        const res = await api('GET', `${CFG.API_BASE}/domains`);
+        if (res.ok && res.data?.response_code === 200) return res.data.data?.domains || ["cheapluxury.eu"];
+        return ["cheapluxury.eu"];
+    };
+    const requestCreateEmail = async (user) => {
+        const domains = await fetchDomains();
+        const emailAddress = `${user}@${domains[~~(Math.random()*domains.length)]}`;
+        const res = await api('POST', `${CFG.API_BASE}/register`, { email: emailAddress, password: CFG.MAIL_PASS });
+        if (res.ok && (res.data?.response_code===200||res.data?.response_code===201)) return emailAddress;
+        return null;
+    };
+    const extractLink = (combinedText) => {
+        const links = (combinedText.match(/https?:\/\/[^\s"\'<>]+/g)||[])
+            .map(l => l.replace(/&amp;/g,'&'))
+            .filter(l => (l.includes('discord.com')||l.includes('click.discord.com')) && !l.includes('support.')&&!l.includes('blog.'));
+        if (!links.length) return null;
+        return links.reduce((a,b) => a.length>b.length?a:b);
+    };
+    const checkEmail = async () => {
+        if (state.checking || !state.email) return;
+        state.checking = true;
+        state.count++;
+        info(`🔍 [Lần ${state.count}] Kiểm tra thư Cheapluxury...`);
+        try {
+            const r = await api('POST', `${CFG.API_BASE}/email/get`, { email:state.email, password:CFG.MAIL_PASS });
+            if (r.ok && r.data?.response_code===200) {
+                const msg = (r.data.data?.emails||[]).find(m =>
+                    m.subject?.toLowerCase().includes('discord') ||
+                    m.subject?.toLowerCase().includes('verify') ||
+                    m.subject?.toLowerCase().includes('xác')
+                );
+                if (msg) {
+                    success('📩 Tìm thấy thư Discord!');
+                    const link = extractLink((msg.body_html||'')+(msg.body_text||''));
+                    if (link) {
+                        localStorage.setItem('v_prev', window.location.href);
+                        localStorage.setItem('v_progress', 'true');
+                        localStorage.setItem('v_email', state.email);
+                        localStorage.setItem('v_user', state.user);
+                        window.location.href = link;
+                        return;
+                    } else { error('❌ Không bóc tách được link verify!'); }
+                }
+            }
+            if (state.count < CFG.MAX) setTimeout(checkEmail, CFG.INTERVAL);
+            else error('⏱️ Hết thời gian chờ mail!');
+        } catch(err) {
+            if (state.count < CFG.MAX) setTimeout(checkEmail, CFG.INTERVAL);
+        } finally { state.checking = false; }
+    };
+
+
+    const setInput = (el, val) => {
+        if (!el) return;
+        Object.getOwnPropertyDescriptor(el.__proto__, 'value').set.call(el, val);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const selDD = async (selector, value) => {
+        const el = $(selector); if (!el) return;
+        el.click(); await sleep(300);
+        const target = Array.from($$('[role="option"],[class*="option"]')).find(o => o.textContent.trim()==value);
+        if (target) target.click(); await sleep(200);
+    };
+    const fillDOB = async () => {
+        const day=(1+~~(Math.random()*28)).toString(), month=(1+~~(Math.random()*12)).toString(), year=(1990+~~(Math.random()*16)).toString();
+        await selDD('div[aria-label*="Ngày"],div[aria-label*="Day"]', day);
+        await selDD('div[aria-label*="Tháng"],div[aria-label*="Month"]', month);
+        await selDD('div[aria-label*="Năm"],div[aria-label*="Year"]', year);
+    };
+
+    const startReg = async () => {
+        info('⏳ Đang tạo Email Cheapluxury...');
+        const userRand = genUsername();
+        const registeredEmail = await requestCreateEmail(userRand);
+        if (!registeredEmail) { error('❌ Lỗi tạo email Cheapluxury!'); return; }
+        state.email = registeredEmail; state.user = userRand;
+        localStorage.setItem('p_email', state.email);
+        localStorage.setItem('p_user', state.user);
+        await sleep(500);
+
+        const icons = [
+            "🖕","💀","👻","🔥","💯","⚡","💥","✨","🌟","⭐",
+            "🎯","🎮","🎲","🎭","🎨","🎪","🎬","🎤","🎧","🎸",
+            "🚀","🛸","🌈","🌙","☀️","🌞","🌝","🌛","⚔️","🗡️"
+        ];
+        const selectedIcons = [...icons].sort(()=>0.5-Math.random()).slice(0,3).join('');
+        const displayName = `${CFG.DISPLAY_NAME} ${selectedIcons}`;
+
+        setInput($('input[type="email"]'), state.email);
+        setInput($('input[aria-label="Tên hiển thị"]'), displayName);
+        setInput($('input[aria-label="Tên đăng nhập"]'), state.user);
+        setInput($('input[aria-label="Mật khẩu"]'), CFG.PASS);
+        await fillDOB();
+        await sleep(500);
+        const submitBtn = $('button[type="submit"]') || Array.from($$('button')).find(b => b.textContent.includes('Tiếp tục')||b.textContent.includes('Đăng ký'));
+        if (submitBtn) success(`🚀 Điền xong (${selectedIcons})! Xác nhận captcha để tiếp tục.`);
+        else error('⚠️ Không tìm thấy nút submit!');
+    };
+
+    const clearData = async () => {
+        localStorage.clear(); sessionStorage.clear();
+        document.cookie.split(';').forEach(c => {
+            const n = c.split('=')[0].trim();
+            document.cookie = `${n}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=.discord.com`;
+        });
+        if (window.indexedDB) {
+            const dbs = await window.indexedDB.databases();
+            await Promise.all(dbs.map(db => db.name ? window.indexedDB.deleteDatabase(db.name) : null));
+        }
+        success('✨ Đã dọn dữ liệu cũ!');
+    };
+
+    const newAcc = async () => {
+        await clearData();
+        localStorage.removeItem('v_done');
+        localStorage.removeItem('v_need_join');
+        localStorage.setItem('auto_start_reg', 'true'); // ★ đánh dấu cần tự start reg
+        window.location.href = 'https://discord.com/register';
+    };
+
+
+    const startAutoRegCountdown = () => {
+        let remaining = 90; // 1 phút 30 giây
+        const bar = $('#countdown-bar');
+        const txt = $('#countdown-text');
+        if (!bar || !txt) return;
+        bar.style.width = '100%';
+        txt.textContent = '1:30';
+        const iv = setInterval(() => {
+            remaining--;
+            const m = Math.floor(remaining/60), s = remaining%60;
+            txt.textContent = `${m}:${s.toString().padStart(2,'0')}`;
+            bar.style.width = `${(remaining/90)*100}%`;
+            if (remaining <= 0) {
+                clearInterval(iv);
+                txt.textContent = '↺ Đang reg mới...';
+                newAcc();
+            }
+        }, 1000);
+        return iv;
+    };
+
+    const verify = async () => {
+        if (localStorage.getItem('v_progress') !== 'true') return;
+        const email = localStorage.getItem('v_email');
+        if (!email) return;
+        info('⏳ Đang lắng nghe trạng thái xác nhận...');
+        const check = setInterval(() => {
+            const txt = document.body.textContent;
+            if (txt.includes('phone')||txt.includes('Phone')||txt.includes('điện thoại')) {
+                clearInterval(check);
+                error('📱 Bị checkpoint số điện thoại!');
+                localStorage.removeItem('v_progress');
+                // đếm ngược 1p30s rồi reg mới
+                setTimeout(() => { const b=$('#countdown-bar'); if(b) startAutoRegCountdown(); }, 500);
+                setTimeout(() => window.location.href='https://discord.com/channels/@me', 2000);
+                return;
+            }
+            if (txt.includes('Đã Được Xác Nhận')||txt.includes('Verified')||txt.includes('Tiếp tục')) {
+                clearInterval(check);
+                success('✅ Tài khoản đã được kích hoạt!');
+                localStorage.setItem('v_done', 'true');
+                localStorage.setItem('v_need_join', 'true');
+                localStorage.removeItem('v_progress');
+                const prev = localStorage.getItem('v_prev')||'https://discord.com/channels/@me';
+                localStorage.removeItem('v_prev');
+                setTimeout(() => window.location.href=prev, 1500);
+            }
+        }, 800);
+        setTimeout(() => clearInterval(check), 30000);
+    };
+
+    // ★ SỬA: chỉ gọi countdown sau khi join
+    const autoJoinServerLogic = async () => {
+        if (localStorage.getItem('v_need_join') !== 'true') return;
+        info('🚀 Tự động gia nhập Server (sau verify)...');
+        await sleep(3000);
+        await joinServer(); // chờ join hoàn tất (dù thành công hay fail)
+        // ★ Bắt đầu countdown để tạo acc mới SAU KHI đã join (hoặc cố gắng join)
+        setTimeout(() => { const b = $('#countdown-bar'); if (b) startAutoRegCountdown(); }, 500);
+        localStorage.removeItem('v_need_join');
+    };
+
+    // ★ SỬA: xóa countdown khỏi channels
+    const channels = async () => {
+        await sleep(2000);
+        const token = getToken();
+        if (token) {
+            const savedEmail = localStorage.getItem('p_email')||localStorage.getItem('v_email')||'Unknown';
+            const savedUser  = localStorage.getItem('p_user') ||localStorage.getItem('v_user') ||'Unknown';
+            const isNew = saveToken(token, savedEmail, savedUser);
+            if (isNew) {
+                success(`✅ Đã lưu token @${savedUser}`);
+                // ★ ĐÃ XÓA countdown ở đây
+            }
+        }
+        if (localStorage.getItem('v_need_join')==='true') await autoJoinServerLogic();
+        else if (localStorage.getItem('v_done')==='true') success('✅ Tài khoản đã hoàn tất.');
+        else {
+            const email = localStorage.getItem('p_email')||localStorage.getItem('v_email');
+            const user  = localStorage.getItem('p_user') ||localStorage.getItem('v_user');
+            if (email) { state.email=email; state.user=user; state.count=0; state.checking=false; setTimeout(checkEmail,2000); }
+        }
+    };
+
+
+    const togglePanel = () => {
+        state.panelOpen = !state.panelOpen;
+        const content = $('#panel-content'), toggle = $('#panel-toggle');
+        if (state.panelOpen) {
+            content.style.maxHeight='400px'; content.style.opacity='1'; content.style.padding='10px 12px'; toggle.textContent='▼';
+        } else {
+            content.style.maxHeight='0'; content.style.opacity='0'; content.style.padding='0 12px'; toggle.textContent='▲';
+        }
+    };
+
+    const panel = () => {
+        const p = document.createElement('div');
+        const isC = location.pathname.includes('/channels/');
+        p.id = 'control-panel';
+
+        // countdown bar (chỉ hiển thị ở trang channels)
+        const countdownHTML = isC ? `
+            <div style="margin-bottom:8px;background:#0f172a;border-radius:6px;padding:6px 8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                    <span style="font-size:10px;color:#94a3b8">⏱️ Auto reg mới</span>
+                    <span id="countdown-text" style="font-size:11px;font-weight:700;color:#60a5fa">—</span>
+                </div>
+                <div style="background:#1e293b;border-radius:4px;height:4px;overflow:hidden">
+                    <div id="countdown-bar" style="height:100%;background:linear-gradient(90deg,#6366f1,#a78bfa);width:0%;transition:width 1s linear"></div>
+                </div>
+            </div>` : '';
+
+        p.innerHTML = `
+            <div id="panel-header" style="display:flex;justify-content:space-between;align-items:center;padding:7px 12px;background:linear-gradient(135deg,#1d4ed8,#4f46e5);border-radius:10px 10px 0 0;cursor:pointer;">
+                <div>
+                    <div style="font-size:12px;font-weight:800;color:#fff;letter-spacing:.5px">Ng Tu Lap 1302</div>
+                    <div style="font-size:9px;color:rgba(255,255,255,.65);margin-top:1px">by Ng Tu Lap </div>
+                </div>
+                <button id="panel-toggle" style="background:rgba(255,255,255,.15);border:none;color:#fff;width:22px;height:22px;border-radius:5px;cursor:pointer;font-size:11px">▼</button>
+            </div>
+            <div id="panel-content" style="max-height:400px;overflow:hidden;transition:all .35s;padding:10px 12px;background:#0f172a;border-radius:0 0 10px 10px;border:1px solid #1e3a5f;border-top:none;">
+                ${isC ? `
+                    <div style="background:#1e293b;padding:6px 10px;border-radius:8px;margin-bottom:8px;font-size:10px;color:#94a3b8;line-height:1.6">
+                        <div>📧 <span id="em-display" style="color:#60a5fa">-</span></div>
+                        <div>👤 <span id="us-display" style="color:#4ade80">-</span></div>
+                    </div>` : ''}
+                ${countdownHTML}
+                <button id="btn-start" style="width:100%;padding:8px;background:linear-gradient(135deg,#2563eb,#4f46e5);color:white;border:none;border-radius:8px;margin-bottom:6px;cursor:pointer;font-size:12px;font-weight:700">
+                    ${isC ? '🔄 Tạo Tài Khoản Mới' : '🚀 Bắt Đầu Điền Form'}
+                </button>
+                <button id="btn-token-manager" style="width:100%;padding:8px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:white;border:none;border-radius:8px;margin-bottom:6px;cursor:pointer;font-size:12px;font-weight:700">
+                    📋 Xem Token (${getAllTokens().length})
+                </button>
+                <button id="btn-save-token" style="width:100%;padding:8px;background:linear-gradient(135deg,#d97706,#b45309);color:white;border:none;border-radius:8px;margin-bottom:6px;cursor:pointer;font-size:12px;font-weight:700">
+                    💾 Lưu Token File .txt
+                </button>
+                <button id="btn-config" style="width:100%;padding:8px;background:linear-gradient(135deg,#475569,#334155);color:white;border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700">
+                    ⚙️ Set Config
+                </button>
+            </div>
+        `;
+        p.style.cssText = `position:fixed;top:15px;right:15px;z-index:999998;font-family:'Inter',sans-serif;width:230px;box-shadow:0 8px 30px rgba(0,0,0,.5);border-radius:10px;overflow:visible;`;
+        document.body.appendChild(p);
+
+        $('#panel-header').addEventListener('click', togglePanel);
+        $('#panel-toggle').addEventListener('click', e => { e.stopPropagation(); togglePanel(); });
+
+        if (isC) {
+            $('#em-display').textContent = localStorage.getItem('p_email')||localStorage.getItem('v_email')||'-';
+            $('#us-display').textContent = localStorage.getItem('p_user') ||localStorage.getItem('v_user') ||'-';
+            $('#btn-start').addEventListener('click', newAcc);
+        } else {
+            $('#btn-start').addEventListener('click', startReg);
+        }
+
+        $('#btn-token-manager').addEventListener('click', showTokenManager);
+
+        $('#btn-save-token').addEventListener('click', () => {
+            const tokens = getAllTokens();
+            if (!tokens.length) { error('❌ Chưa có token nào!'); return; }
+            const name = prompt('Tên file (không cần đuôi)', 'tokens');
+            if (!name) return;
+            const blob = new Blob([tokens.map(t=>t.token).join('\n')], {type:'text/plain'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href=url; a.download=`${name}.txt`; a.click();
+            URL.revokeObjectURL(url);
+            success(`✅ Đã lưu ${tokens.length} token vào ${name}.txt`);
+        });
+
+        $('#btn-config').addEventListener('click', showSetConfig);
+    };
+
+
+    const init = () => {
+        const path = location.pathname;
+        if (path.includes('/register')) {
+            setTimeout(panel, 1000);
+            // ★ Nếu có flag auto_start_reg thì tự động bắt đầu reg
+            if (localStorage.getItem('auto_start_reg') === 'true') {
+                localStorage.removeItem('auto_start_reg');
+                setTimeout(startReg, 1500); // đợi panel load xong
+            }
+        } else if (path.includes('/verify')) {
+            verify();
+        } else if (path.includes('/channels')) {
+            setTimeout(panel, 1000);
+            channels();
+        }
+    };
+    init();
+})();
