@@ -1,0 +1,102 @@
+local Players=game:GetService("Players")
+local RunService=game:GetService("RunService")
+local UserInputService=game:GetService("UserInputService")
+local Camera=workspace.CurrentCamera
+
+local enabled=false
+local toggleKey=Enum.KeyCode.Q
+local aimRadius=140
+local smooth=0.18
+local fov=180
+local maxDistance=1000
+local prediction=0.12
+local teamCheck=true
+local wallCheck=false
+
+local localPlayer=Players.LocalPlayer
+local mouse=UserInputService:GetMouseLocation()
+
+local function getClosestTarget()
+	local best=nil
+	local bestScore=math.huge
+	for _,plr in ipairs(Players:GetPlayers()) do
+		if plr~=localPlayer then
+			if plr.Character and plr.Character.Parent and plr.Character:FindFirstChild("HumanoidRootPart") and plr.Character:FindFirstChildOfClass("Humanoid") then
+				local hum=plr.Character:FindFirstChildOfClass("Humanoid")
+				local hrp=plr.Character:FindFirstChild("HumanoidRootPart")
+				if hum and hum.Health>0 then
+					if not teamCheck or (plr.Team==nil or localPlayer.Team==nil or plr.Team~=localPlayer.Team) then
+						local pos=hrp.Position
+						local dist=(pos-Camera.CFrame.Position).Magnitude
+						if dist<=maxDistance then
+							local screen,onscreen=Camera:WorldToViewportPoint(pos)
+							if onscreen then
+								local dx=screen.X-mouse.X
+								local dy=screen.Y-mouse.Y
+								local mag=math.sqrt(dx*dx+dy*dy)
+								if mag<=fov and mag<=aimRadius then
+									local score=mag
+									if score<bestScore then
+										if wallCheck then
+											local origin=Camera.CFrame.Position
+											local dir=(pos-origin)
+											local params=RaycastParams.new()
+											params.FilterType=Enum.RaycastFilterType.Blacklist
+											params.FilterDescendantsInstances={localPlayer.Character}
+											params.IgnoreWater=true
+											local ray=workspace:Raycast(origin,dir,params)
+											if ray and ray.Instance and not plr.Character:IsAncestorOf(ray.Instance) then
+												goto continue
+											end
+										end
+										bestScore=score
+										best=plr
+									end
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+		::continue::
+	end
+	return best
+end
+
+local function getAimPoint(plr)
+	local char=plr.Character
+	local hrp=char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return nil end
+	local vel=hrp.AssemblyLinearVelocity or Vector3.zero
+	local predicted=hrp.Position+vel*prediction
+	local offset=Vector3.new(0,0,0)
+	return predicted+offset
+end
+
+local function aimAt(worldPos,dt)
+	local origin=Camera.CFrame.Position
+	local dir=(worldPos-origin)
+	if dir.Magnitude<=0.001 then return end
+	local targetCFrame=CFrame.lookAt(origin,worldPos)
+	local current=Camera.CFrame
+	local alpha=1-math.pow(1-smooth,dt*60)
+	Camera.CFrame=current:Lerp(targetCFrame,alpha)
+end
+
+UserInputService.InputBegan:Connect(function(input,gp)
+	if gp then return end
+	if input.KeyCode==toggleKey then
+		enabled=not enabled
+	end
+end)
+
+RunService.RenderStepped:Connect(function(dt)
+	if not enabled then return end
+	if not Camera then return end
+	local target=getClosestTarget()
+	if not target then return end
+	local aimPoint=getAimPoint(target)
+	if not aimPoint then return end
+	aimAt(aimPoint,dt)
+end)
