@@ -1,0 +1,520 @@
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
+local Debris = game:GetService("Debris")
+
+local UNC_RemoteEventName = "UNC_Fling_Bounce_RemoteEvent_v1"
+local UNC_TagFlingThing = "UNC_FlingThing_v1"
+local UNC_CreateFolderName = "UNC_RuntimeObjects_v1"
+
+local UNC_ServerFolder
+local UNC_RemoteEvent
+
+local function GetCharacterRoot(character: Model)
+	if not character then
+		return nil
+	end
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then
+		return hrp
+	end
+	return nil
+end
+
+local function GetHumanoid(character: Model)
+	if not character then
+		return nil
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	return humanoid
+end
+
+local function SafeUnitVector(v: Vector3)
+	if v.Magnitude < 1e-6 then
+		return Vector3.new(0, 0, -1)
+	end
+	return v.Unit
+end
+
+local function ValidateImpulseParams(dir: any, horizSpeed: any, upSpeed: any)
+	if typeof(dir) ~= "Vector3" then
+		return nil
+	end
+	if typeof(horizSpeed) ~= "number" then
+		return nil
+	end
+	if typeof(upSpeed) ~= "number" then
+		return nil
+	end
+	if not (horizSpeed > 0 and horizSpeed < 50000) then
+		return nil
+	end
+	if not (upSpeed > 0 and upSpeed < 50000) then
+		return nil
+	end
+	local u = SafeUnitVector(dir)
+	return u, horizSpeed, upSpeed
+end
+
+local function FindNearestFlingThingForPlayer(player: Player, fromPos: Vector3, maxDistance: number)
+	local bestPart: BasePart? = nil
+	local bestDist = maxDistance
+
+	local ok, tagged = pcall(function()
+		return CollectionService:GetTagged(UNC_TagFlingThing)
+	end)
+	if not ok or typeof(tagged) ~= "table" then
+		return nil
+	end
+
+	local userId = player.UserId
+	for _, inst in ipairs(tagged) do
+		if inst and inst:IsA("BasePart") then
+			if inst:GetAttribute("UNC_CreatorUserId") == userId then
+				local d = (inst.Position - fromPos).Magnitude
+				if d <= bestDist then
+					bestDist = d
+					bestPart = inst
+				end
+			end
+		end
+	end
+
+	return bestPart
+end
+
+if RunService:IsServer() then
+	UNC_RemoteEvent = ReplicatedStorage:FindFirstChild(UNC_RemoteEventName) :: RemoteEvent?
+	if not UNC_RemoteEvent then
+		UNC_RemoteEvent = Instance.new("RemoteEvent")
+		UNC_RemoteEvent.Name = UNC_RemoteEventName
+		UNC_RemoteEvent.Parent = ReplicatedStorage
+	end
+
+	UNC_ServerFolder = workspace:FindFirstChild(UNC_CreateFolderName) :: Folder?
+	if not UNC_ServerFolder then
+		UNC_ServerFolder = Instance.new("Folder")
+		UNC_ServerFolder.Name = UNC_CreateFolderName
+		UNC_ServerFolder.Parent = workspace
+	end
+
+	local cooldowns: { [number]: number } = {}
+	local lastSpawnTimes: { [number]: number } = {}
+	local function CheckCooldown(player: Player, cooldownSeconds: number)
+		local now = os.clock()
+		local uid = player.UserId
+		local last = cooldowns[uid] or 0
+		if now - last < cooldownSeconds then
+			return false
+		end
+		cooldowns[uid] = now
+		return true
+	end
+
+	local function CheckSpawnCooldown(player: Player, cooldownSeconds: number)
+		local now = os.clock()
+		local uid = player.UserId
+		local last = lastSpawnTimes[uid] or 0
+		if now - last < cooldownSeconds then
+			return false
+		end
+		lastSpawnTimes[uid] = now
+		return true
+	end
+
+	local function SpawnFlingThing(player: Player, spawnPos: Vector3, initialDir: Vector3, horizSpeed: number, upSpeed: number)
+		local now = os.clock()
+		local uid = player.UserId
+
+		local maxThingsPerPlayer = 12
+		local count = 0
+		local tagged = CollectionService:GetTagged(UNC_TagFlingThing)
+		for _, inst in ipairs(tagged) do
+			if inst and inst:IsA("BasePart") then
+				if inst:GetAttribute("UNC_CreatorUserId") == uid then
+					count += 1
+				end
+			end
+		end
+		if count >= maxThingsPerPlayer then
+			return
+		end
+
+		local part = Instance.new("Part")
+		part.Name = ("UNC_FlingThing_%d_%f"):format(uid, now)
+		part.Shape = Enum.PartType.Ball
+		part.Size = Vector3.new(2.4, 2.4, 2.4)
+		part.Material = Enum.Material.Neon
+		part.Color = Color3.fromHSV((uid % 360) / 360, 1, 1)
+		part.CanCollide = true
+		part.CanTouch = true
+		part.Anchored = false
+		part.Massless = false
+		part.CastShadow = false
+		part.TopSurface = Enum.SurfaceType.Smooth
+		part.BottomSurface = Enum.SurfaceType.Smooth
+		part.Parent = UNC_ServerFolder
+
+		part:SetAttribute("UNC_CreatorUserId", uid)
+		CollectionService:AddTag(part, UNC_TagFlingThing)
+
+		part.CFrame = CFrame.new(spawnPos)
+
+		local dir = SafeUnitVector(initialDir)
+		local horiz = dir * math.clamp(horizSpeed, 0, 50000)
+		local up = Vector3.new(0, math.clamp(upSpeed, 0, 50000), 0)
+		local impulse = horiz + up
+
+		part.AssemblyLinearVelocity = Vector3.zero
+		part:ApplyImpulse(impulse * 0.9)
+
+		Debris:AddItem(part, 18)
+	end
+
+	local function ApplyImpulseToRoot(root: BasePart, dir: Vector3, horizSpeed: number, upSpeed: number)
+		local impulseParams = ValidateImpulseParams(dir, horizSpeed, upSpeed)
+		if not impulseParams then
+			return
+		end
+		local udir, hs, us = impulseParams
+
+		local horiz = udir * hs
+		local up = Vector3.new(0, us, 0)
+		local impulse = horiz + up
+
+		if root:IsA("BasePart") then
+			root.AssemblyLinearVelocity = Vector3.zero
+			root:ApplyImpulse(impulse)
+		end
+	end
+
+	local function OnRequest(player: Player, action: any, payload: any)
+		if not player or not player:IsA("Player") then
+			return
+		end
+		if not UNC_RemoteEvent then
+			return
+		end
+		if typeof(action) ~= "string" then
+			return
+		end
+		if typeof(payload) ~= "table" then
+			payload = {}
+		end
+
+		local character = player.Character
+		local root = GetCharacterRoot(character)
+		local humanoid = GetHumanoid(character)
+		if not root or not humanoid or humanoid.Health <= 0 then
+			return
+		end
+
+		if action == "FlingSelf" then
+			if not CheckCooldown(player, 0.08) then
+				return
+			end
+
+			local dir = payload.LookDirection
+			local horizSpeed = payload.HorizontalSpeed
+			local upSpeed = payload.UpwardSpeed
+
+			local validated = ValidateImpulseParams(dir, horizSpeed, upSpeed)
+			if not validated then
+				return
+			end
+			ApplyImpulseToRoot(root, validated, 1, 1)
+			local udir, hs, us = validated
+			ApplyImpulseToRoot(root, udir, hs, us)
+			return
+		end
+
+		if action == "SpawnFlingThing" then
+			if not CheckSpawnCooldown(player, 0.25) then
+				return
+			end
+
+			local pos = payload.SpawnPosition
+			local dir = payload.LookDirection
+			local horizSpeed = payload.HorizontalSpeed
+			local upSpeed = payload.UpwardSpeed
+
+			if typeof(pos) ~= "Vector3" or typeof(dir) ~= "Vector3" or typeof(horizSpeed) ~= "number" or typeof(upSpeed) ~= "number" then
+				return
+			end
+
+			local radius = 16
+			if (pos - root.Position).Magnitude > radius then
+				pos = root.Position + (SafeUnitVector(dir) * 4) + Vector3.new(0, 2, 0)
+			end
+
+			SpawnFlingThing(player, pos, dir, horizSpeed, upSpeed)
+			return
+		end
+
+		if action == "FlingNearestThing" then
+			if not CheckCooldown(player, 0.09) then
+				return
+			end
+
+			local dir = payload.LookDirection
+			local horizSpeed = payload.HorizontalSpeed
+			local upSpeed = payload.UpwardSpeed
+			if typeof(dir) ~= "Vector3" or typeof(horizSpeed) ~= "number" or typeof(upSpeed) ~= "number" then
+				return
+			end
+			if not (horizSpeed > 0 and horizSpeed < 50000) then
+				return
+			end
+			if not (upSpeed > 0 and upSpeed < 50000) then
+				return
+			end
+
+			local nearest = FindNearestFlingThingForPlayer(player, root.Position, 60)
+			if not nearest or not nearest:IsA("BasePart") then
+				return
+			end
+			if nearest.Anchored then
+				return
+			end
+
+			local impulseParams = ValidateImpulseParams(dir, horizSpeed, upSpeed)
+			if not impulseParams then
+				return
+			end
+			local udir, hs, us = impulseParams
+
+			local away = (nearest.Position - root.Position)
+			if away.Magnitude > 0.01 then
+				away = away.Unit
+				local mix = 0.35
+				udir = (udir * (1 - mix)) + (away * mix)
+				if udir.Magnitude > 0 then
+					udir = udir.Unit
+				end
+			end
+
+			local horiz = udir * hs
+			local up = Vector3.new(0, us, 0)
+			local impulse = horiz + up
+
+			nearest.AssemblyLinearVelocity = Vector3.zero
+			nearest:ApplyImpulse(impulse)
+			return
+		end
+	end
+
+	UNC_RemoteEvent.OnServerEvent:Connect(OnRequest)
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		plr.CharacterAdded:Connect(function()
+			local uid = plr.UserId
+			cooldowns[uid] = 0
+			lastSpawnTimes[uid] = 0
+		end)
+	end
+
+	Players.PlayerAdded:Connect(function(plr: Player)
+		cooldowns[plr.UserId] = 0
+		lastSpawnTimes[plr.UserId] = 0
+	end)
+else
+	UNC_RemoteEvent = ReplicatedStorage:WaitForChild(UNC_RemoteEventName) :: RemoteEvent
+
+	local localPlayer = Players.LocalPlayer
+
+	local function GetCharacterRoot()
+		local character = localPlayer.Character
+		if not character then
+			return nil
+		end
+		return GetCharacterRoot(character)
+	end
+
+	local function GetLookDirection()
+		local root = GetCharacterRoot()
+		if not root then
+			return Vector3.new(0, 0, -1)
+		end
+		local look = root.CFrame.LookVector
+		if look.Magnitude < 0.001 then
+			return Vector3.new(0, 0, -1)
+		end
+		return look.Unit
+	end
+
+	local function GetSafeSpawnPosition()
+		local root = GetCharacterRoot()
+		if not root then
+			return Vector3.new(0, 20, 0)
+		end
+		local dir = GetLookDirection()
+		return root.Position + dir * 4 + Vector3.new(0, 2, 0)
+	end
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "UNC_Fling_Bounce_GUI_v1"
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+
+	local frame = Instance.new("Frame")
+	frame.Name = "MainFrame"
+	frame.Size = UDim2.new(0, 240, 0, 140)
+	frame.Position = UDim2.new(0, 12, 0, 12)
+	frame.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
+	frame.BorderSizePixel = 0
+	frame.BackgroundTransparency = 0.15
+	frame.Parent = gui
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 12)
+	corner.Parent = frame
+
+	local uiStroke = Instance.new("UIStroke")
+	uiStroke.Thickness = 1
+	uiStroke.Color = Color3.fromRGB(60, 120, 255)
+	uiStroke.Transparency = 0.3
+	uiStroke.Parent = frame
+
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.Size = UDim2.new(1, -18, 0, 26)
+	title.Position = UDim2.new(0, 9, 0, 6)
+	title.BackgroundTransparency = 1
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 15
+	title.TextColor3 = Color3.fromRGB(190, 210, 255)
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Text = "UNC Fling/Bounce"
+	title.Parent = frame
+
+	local status = Instance.new("TextLabel")
+	status.Name = "Status"
+	status.Size = UDim2.new(1, -18, 0, 20)
+	status.Position = UDim2.new(0, 9, 0, 30)
+	status.BackgroundTransparency = 1
+	status.Font = Enum.Font.Gotham
+	status.TextSize = 13
+	status.TextColor3 = Color3.fromRGB(200, 200, 210)
+	status.TextXAlignment = Enum.TextXAlignment.Left
+	status.Text = "Local: Self + Your Things"
+	status.Parent = frame
+
+	local function makeButton(name: string, y: number, text: string)
+		local btn = Instance.new("TextButton")
+		btn.Name = name
+		btn.Size = UDim2.new(1, -18, 0, 34)
+		btn.Position = UDim2.new(0, 9, 0, y)
+		btn.BackgroundColor3 = Color3.fromRGB(35, 75, 160)
+		btn.Text = text
+		btn.Font = Enum.Font.GothamSemibold
+		btn.TextSize = 14
+		btn.TextColor3 = Color3.fromRGB(245, 248, 255)
+		btn.AutoButtonColor = true
+		btn.BorderSizePixel = 0
+		btn.Parent = frame
+
+		local btnCorner = Instance.new("UICorner")
+		btnCorner.CornerRadius = UDim.new(0, 10)
+		btnCorner.Parent = btn
+
+		local btnStroke = Instance.new("UIStroke")
+		btnStroke.Thickness = 1
+		btnStroke.Color = Color3.fromRGB(110, 165, 255)
+		btnStroke.Transparency = 0.2
+		btnStroke.Parent = btn
+
+		return btn
+	end
+
+	local btnFlingSelf = makeButton("BtnFlingSelf", 56, "Fling Self (Bounce)")
+	local btnSpawnThing = makeButton("BtnSpawnThing", 92, "Spawn Thing")
+	local btnFlingThing = makeButton("BtnFlingThing", 128, "Fling Nearest Thing")
+
+	frame.Size = UDim2.new(0, 240, 0, 168)
+
+	gui.Parent = localPlayer:WaitForChild("PlayerGui")
+
+	local horizSpeedSelf = 2600
+	local upSpeedSelf = 2100
+
+	local horizSpeedThing = 3200
+	local upSpeedThing = 1700
+
+	local function CallServer(action: string, data: table)
+		UNC_RemoteEvent:FireServer(action, data)
+	end
+
+	local function PressFlingSelf()
+		local look = GetLookDirection()
+		CallServer("FlingSelf", {
+			LookDirection = look,
+			HorizontalSpeed = horizSpeedSelf,
+			UpwardSpeed = upSpeedSelf,
+		})
+	end
+
+	local function PressSpawnThing()
+		local pos = GetSafeSpawnPosition()
+		local look = GetLookDirection()
+		CallServer("SpawnFlingThing", {
+			SpawnPosition = pos,
+			LookDirection = look,
+			HorizontalSpeed = horizSpeedThing,
+			UpwardSpeed = upSpeedThing,
+		})
+	end
+
+	local function PressFlingNearestThing()
+		local look = GetLookDirection()
+		CallServer("FlingNearestThing", {
+			LookDirection = look,
+			HorizontalSpeed = horizSpeedThing,
+			UpwardSpeed = upSpeedThing,
+		})
+	end
+
+	btnFlingSelf.MouseButton1Down:Connect(function()
+		PressFlingSelf()
+	end)
+
+	btnSpawnThing.MouseButton1Down:Connect(function()
+		PressSpawnThing()
+	end)
+
+	btnFlingThing.MouseButton1Down:Connect(function()
+		PressFlingNearestThing()
+	end)
+
+	local UIS = game:GetService("UserInputService")
+	UIS.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)
+		if gameProcessed then
+			return
+		end
+		if input.UserInputType == Enum.UserInputType.Keyboard then
+			if input.KeyCode == Enum.KeyCode.J then
+				PressFlingSelf()
+			elseif input.KeyCode == Enum.KeyCode.K then
+				PressSpawnThing()
+			elseif input.KeyCode == Enum.KeyCode.L then
+				PressFlingNearestThing()
+			end
+		end
+	end)
+
+	local function RefreshStatus()
+		local root = GetCharacterRoot()
+		if root then
+			status.Text = "Local: Self + Your Things"
+		else
+			status.Text = "Waiting for character..."
+		end
+	end
+
+	localPlayer.CharacterAdded:Connect(function()
+		task.wait(0.2)
+		RefreshStatus()
+	end)
+
+	RefreshStatus()
+end
